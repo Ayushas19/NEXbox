@@ -119,6 +119,7 @@
             display: flex;
             gap: 10px;
             align-items: center;
+            flex-wrap: wrap;
         }
 
         input {
@@ -155,6 +156,64 @@
             transform: translateY(0);
         }
 
+        .file-input {
+            display: none;
+        }
+
+        .file-label {
+            padding: 12px 20px;
+            background: #5865f2;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+
+        .file-label:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(88, 101, 242, 0.4);
+        }
+
+        .audio-controls {
+            display: flex;
+            gap: 5px;
+        }
+
+        .audio-btn {
+            padding: 12px 15px;
+            background: #57f287;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+
+        .audio-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(87, 242, 135, 0.4);
+        }
+
+        .recording {
+            background: #faa61a !important;
+        }
+
+        .message-file {
+            margin-top: 5px;
+        }
+
+        .message-file img {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 8px;
+        }
+
+        .message-file audio {
+            max-width: 100%;
+        }
+
         @media (max-width: 600px) {
             #app {
                 width: 95%;
@@ -173,6 +232,12 @@
             <input type="text" id="username" placeholder="Enter your name" />
             <input type="text" id="message" placeholder="Type message..." />
             <button onclick="sendMessage()">Send</button>
+            <label for="file-input" class="file-label">📎 File</label>
+            <input type="file" id="file-input" class="file-input" onchange="sendFile()" />
+            <div class="audio-controls">
+                <button id="record-btn" class="audio-btn" onclick="toggleRecording()">🎤 Record</button>
+                <button id="stop-btn" class="audio-btn" onclick="stopRecording()" style="display:none;">⏹️ Stop</button>
+            </div>
         </div>
     </div>
 
@@ -180,6 +245,9 @@
     <script>
         const socket = io();
         const messages = document.getElementById("messages");
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
 
         function sendMessage() {
             const user = document.getElementById("username").value;
@@ -188,9 +256,103 @@
 
             socket.emit("chat", {
                 user,
-                msg
+                msg,
+                type: "text"
             });
             document.getElementById("message").value = "";
+        }
+
+        function sendFile() {
+            const user = document.getElementById("username").value;
+            const fileInput = document.getElementById("file-input");
+            const file = fileInput.files[0];
+            if (!user || !file) return alert("Enter name & select file");
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            fetch("/upload", {
+                method: "POST",
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                socket.emit("chat", {
+                    user,
+                    msg: file.name,
+                    type: "file",
+                    url: data.url,
+                    fileType: data.type
+                });
+                fileInput.value = "";
+            });
+        }
+
+        async function toggleRecording() {
+            const user = document.getElementById("username").value;
+            if (!user) return alert("Enter your name first");
+
+            if (!isRecording) {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        }
+
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+                    sendAudio(audioBlob);
+                    stream.getTracks().forEach(track => track.stop());
+                };
+
+                mediaRecorder.start();
+                isRecording = true;
+                document.getElementById("record-btn").classList.add("recording");
+                document.getElementById("record-btn").textContent = "🔴 Recording...";
+                document.getElementById("stop-btn").style.display = "inline-block";
+            } catch (err) {
+                alert("Microphone access denied or not available");
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                document.getElementById("record-btn").classList.remove("recording");
+                document.getElementById("record-btn").textContent = "🎤 Record";
+                document.getElementById("stop-btn").style.display = "none";
+            }
+        }
+
+        function sendAudio(blob) {
+            const user = document.getElementById("username").value;
+            const formData = new FormData();
+            formData.append("audio", blob, "audio.webm");
+
+            fetch("/upload-audio", {
+                method: "POST",
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                socket.emit("chat", {
+                    user,
+                    msg: "Audio message",
+                    type: "audio",
+                    url: data.url
+                });
+            });
         }
 
         // Add event listener for Enter key on message input
@@ -227,6 +389,30 @@
             userSpan.appendChild(timeSpan);
             content.appendChild(userSpan);
             content.appendChild(textSpan);
+
+            // Handle file and audio
+            if (data.type === "file" || data.type === "audio") {
+                const fileDiv = document.createElement("div");
+                fileDiv.className = "message-file";
+                if (data.fileType && data.fileType.startsWith("image/")) {
+                    const img = document.createElement("img");
+                    img.src = data.url;
+                    img.alt = data.msg;
+                    fileDiv.appendChild(img);
+                } else if (data.type === "audio") {
+                    const audio = document.createElement("audio");
+                    audio.controls = true;
+                    audio.src = data.url;
+                    fileDiv.appendChild(audio);
+                } else {
+                    const link = document.createElement("a");
+                    link.href = data.url;
+                    link.target = "_blank";
+                    link.textContent = "📎 " + data.msg;
+                    fileDiv.appendChild(link);
+                }
+                content.appendChild(fileDiv);
+            }
 
             div.appendChild(avatar);
             div.appendChild(content);
