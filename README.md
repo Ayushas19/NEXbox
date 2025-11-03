@@ -1,3 +1,1 @@
-"# finalNexora" 
-# NEX-box
-# NEX-box
+# NEXbox
