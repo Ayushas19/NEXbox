@@ -1,7 +1,8 @@
 const express = require("express");
 const app = express();
 const http = require("http").createServer(app);
-const io = require("socket.io")(http);
+const { Server } = require("socket.io");
+const io = new Server(http);
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
